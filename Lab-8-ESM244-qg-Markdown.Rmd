@@ -1,0 +1,141 @@
+---
+title: "Week 8 Lab"
+author: "Quentin"
+date: "March 8, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+###Load the Packages
+
+```{r}
+library(tidyverse)
+library(sf)
+library(tmap)
+library(leaflet)
+library(spatstat)
+library(maptools)
+library(ggplot2)
+```
+
+###Column Graph of Texas Oil Spills
+
+```{r}
+oil_spills <- read_csv("oil_spills.csv")
+```
+
+
+```{r}
+df <- oil_spills %>%
+  filter(`Accident State` == "TX" & `Accident Year` < 2017) %>% 
+  group_by(`Accident Year`) %>% 
+  summarise(Loss = sum(`Net Loss (Barrels)`))
+```
+
+```{r}
+colnames(df) <- c("Year", "Loss")
+```
+
+```{r}
+ggplot(df, aes(x = Year, y= Loss)) +
+         geom_col()
+```
+
+```{r}
+df_loc <- oil_spills %>%
+  filter(`Accident State` == "TX" & `Accident Year` == 2016) %>%
+  select(Latitude, Longitude, `Net Loss (Barrels)`)
+
+colnames(df_loc) <- c("latitude", "longitude", "net_loss")
+
+oil_sf <- st_as_sf(df_loc, coords = c("longitude", "latitude"), crs = 4326)
+
+leaflet(oil_sf) %>%
+  addTiles() %>%
+  addMarkers()
+```
+
+## tmap plot with the Texas state shapefile
+
+```{r}
+states <- st_read(dsn = ".", layer = "states")
+
+tex_border <- states %>% 
+  filter(STATE_NAME == "Texas") %>% 
+  st_transform(4326)
+
+plot(tex_border)
+
+tm_shape(tex_border) +
+  tm_polygons() +
+  tm_shape(oil_sf) +
+  tm_dots(size = 0.3)
+```
+
+
+###Convert the data to spatial points patterns
+(combination of the point data and the bounding window)
+
+```{r}
+
+spill_sp <- as(oil_sf, "Spatial")
+spill_ppp <- as(spill_sp, "ppp")
+
+tx_sp <- as(tex_border, "Spatial")
+tx_owin <- as(tx_sp, "owin")
+
+all_ppp <- ppp(spill_ppp$x, spill_ppp$y, window = tx_owin)
+
+```
+
+###A Density Plot:
+```{r}
+plot(density(all_ppp, sigma = 0.3))
+```
+
+
+###Quadrat Test for Spacial Evenness
+Are oil spills evenly distributed throughout the state?
+
+```{r}
+oil_qt <- quadrat.test(all_ppp, nx = 5, ny = 5)
+oil_qt
+
+plot(all_ppp)
+plot(oil_qt, add = TRUE, cex = 0.4)
+
+```
+
+###G-Function for Nearest Neighbor Analysis
+```{r}
+r <- seq(0,1, by = 0.01)
+
+oil_gfun <- envelope(all_ppp, fun = Gest, r = r, nsim = 100)
+
+ggplot(oil_gfun, aes(x = r, y = obs)) +
+  geom_line(color = "black")+
+  geom_line(aes(x = r, y = theo, color = "red"))
+
+```
+What this tells us is that our observed data has a higher proportion of point pairs with nearest neigbors at shorter distances compared to CSR data.
+Units of x-axis (r) ???
+
+
+### Nearest Neighbor Using the L-Function (same as Ripley's K, but standardized)
+doing 20 simulations, but on your own you probably want to do more
+
+```{r}
+
+r2 <- seq(0,3, by = 0.5)
+
+oil_lfun <- envelope(all_ppp, fun = Lest, r = r2, nsim = 20, global = TRUE)
+
+ggplot(oil_lfun, aes(x = r2, y = obs)) +
+  geom_line(color = "black")+
+  geom_line(aes(x = r2, y = theo), color = "blue")
+
+```
+
